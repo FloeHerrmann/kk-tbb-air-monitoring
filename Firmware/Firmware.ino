@@ -20,8 +20,15 @@
 #define HUMIDITY_SENSOR_SIG A0
 #define HUMIDITY_SENSOR_TYPE DHT22
 
-#define SEVEN_SEGMENT_TX 8
-#define SEVEN_SEGMENT_RX 7
+#define SEVEN_SEGMENT_TX 10
+#define SEVEN_SEGMENT_RX 11
+
+#define BUTTON_OPEN 3
+#define BUTTON_CLOSE 2
+#define OUTPUT_CLOSE 4
+#define OUTPUT_OPEN 5
+
+#define UPDATE_INTERVAL 10000
 
 char TemperatureString[10]; 
 
@@ -35,50 +42,87 @@ Adafruit_24bargraph HumidityBar = Adafruit_24bargraph();
 uint CO2Counter = 0;
 uint HumidityCounter = 0;
 
+uint CloseButtonIsPressed = false;
+uint OpenButtonIsPressed = false;
+ulong IntervalHelper = 0;
+
 void setup(){
 
+	Serial.begin( 57600 );
+
 	TemperatureDisplay.begin( 9600 );
-	SetTemperatureDisplayBrightness( 200 );
+	SetTemperatureDisplayBrightness( 255 );
 
 	HumiditySensor.begin();
 
 	CO2Bar.begin( 0x70 );
-	HumidityBar.begin( 0x71 );	
+	HumidityBar.begin( 0x71 );
+
+	pinMode( BUTTON_CLOSE , INPUT_PULLUP );
+	pinMode( BUTTON_OPEN , INPUT_PULLUP );
+	pinMode( OUTPUT_CLOSE , OUTPUT );
+	pinMode( OUTPUT_OPEN , OUTPUT );
+
+	UpdateValues();
+	IntervalHelper = millis();
 }
 
 void loop(){
 	
+	if( ( millis() - IntervalHelper ) >= UPDATE_INTERVAL ) {
+		UpdateValues();
+		IntervalHelper = millis();
+	}
+
+	CloseButtonIsPressed = digitalRead( BUTTON_CLOSE ); 
+	OpenButtonIsPressed = digitalRead( BUTTON_OPEN ); 
+
+	if( CloseButtonIsPressed == 0 ) {
+		digitalWrite( OUTPUT_CLOSE , HIGH );
+	} else if( OpenButtonIsPressed == 0) {
+		digitalWrite( OUTPUT_OPEN , HIGH );
+	} else {
+		digitalWrite( OUTPUT_OPEN , LOW );
+		digitalWrite( OUTPUT_CLOSE , LOW ); 
+	}
+
+}
+
+void UpdateValues(){
+	Serial.println( "Update Values" );
 	float HumidityF = HumiditySensor.readHumidity();
 	int Humidity = (int)HumidityF;
+	Serial.println( Humidity );
 
 	float TemperatureF = HumiditySensor.readTemperature();
 	int Temperature = (int)( TemperatureF * 100.0 );
+	Serial.println( Temperature );
 
-    SetCO2Bar( CO2Counter );
+	SetCO2Bar( CO2Counter );
     SetHumidityBar( Humidity );
     SetTemperatureDisplayNumber( Temperature );
 
-	if( CO2Counter < 3600 ) CO2Counter += 150;
+    Serial.println( CO2Counter );
+
+    if( CO2Counter < 3600 ) CO2Counter += 150;
 	else CO2Counter = 0;
-
-	delay( 1000 );
-
 }
 
 void SetCO2Bar( uint value ) {
 	ubyte bars = value / 150;
 	for( ubyte bar = 0 ; bar < bars ; bar++ ) {
-		if( bar < 10 ) CO2Bar.setBar( bar , LED_GREEN );
+		CO2Bar.setBar( bar , LED_OFF );
+		if( bar < 10 ) CO2Bar.setBar( 24 - bar , LED_GREEN );
 		if( bar >= 10 && bar < 17 ) {
-			CO2Bar.setBar( bar , LED_RED );
-			CO2Bar.setBar( bar , LED_YELLOW );
+			CO2Bar.setBar( 24 - bar , LED_RED );
+			CO2Bar.setBar( 24 - bar , LED_YELLOW );
 		}
 		if( bar >= 17 && bar < 24 ) {
-			CO2Bar.setBar( bar , LED_RED );
+			CO2Bar.setBar( 24 - bar , LED_RED );
 		}
 	}
 	for( ubyte bar = bars ; bar < 24 ; bar++ ) {
-		CO2Bar.setBar( bar , LED_OFF );
+		CO2Bar.setBar( 24 - bar , LED_OFF );
 	}
 	CO2Bar.writeDisplay();
 }
@@ -87,18 +131,18 @@ void SetHumidityBar( uint value ) {
 	ubyte bars = (float)value / 4.1666;
 	for( ubyte bar = 0 ; bar < bars ; bar++ ) {
 		if( bar < 7 ) {
-			HumidityBar.setBar( bar , LED_RED );
-			HumidityBar.setBar( bar , LED_YELLOW );
+			HumidityBar.setBar( 24 - bar , LED_RED );
+			HumidityBar.setBar( 24 - bar , LED_YELLOW );
 		}
 		if( bar >= 7 && bar < 14 ) {
-			HumidityBar.setBar( bar , LED_GREEN );
+			HumidityBar.setBar( 24 - bar , LED_GREEN );
 		}
 		if( bar >= 14 && bar < 24 ) {
-			HumidityBar.setBar( bar , LED_RED );
+			HumidityBar.setBar( 24 - bar , LED_RED );
 		}
 	}
 	for( ubyte bar = bars ; bar < 24 ; bar++ ) {
-		HumidityBar.setBar( bar , LED_OFF );
+		HumidityBar.setBar( 24 - bar , LED_OFF );
 	}
 	HumidityBar.writeDisplay();
 }
