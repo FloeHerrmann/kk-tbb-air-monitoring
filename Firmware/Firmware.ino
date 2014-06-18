@@ -1,178 +1,285 @@
-/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-/* Author:    m2m systems GmbH, Florian Herrmann                             */
-/* Copyright: 2014, m2m systems GmbH, Florian Herrmann                       */
-/* Purpose:                                                                  */
-/*   Monitoring and measuring the water consuption and temperatures of a     */
-/*   shower to calculate the costs for taking this shower.                   */
-/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-
-#include <SoftwareSerial.h>
 #include <Wire.h>
+#include <SoftwareSerial.h>
+#include <SevSeg.h>
 #include <Adafruit_LEDBackpack.h>
 #include <Adafruit_GFX.h>
 #include <DHT.h>
+#include <kSeries.h>
+#include <EEPROM.h>
 
-// Define own data types
-#define ubyte uint8_t
-#define uint uint16_t
-#define ulong uint32_t
+#define BUTTON_OPEN_PIN 3
+#define OUTPUT_OPEN_PIN 5
+#define BUTTON_CLOSE_PIN 2
+#define OUTPUT_CLOSE_PIN 4
 
-#define HUMIDITY_SENSOR_SIG A0
-#define HUMIDITY_SENSOR_TYPE DHT22
+#define SEVEN_SEGMENT_TX_PIN 10
+#define SEVEN_SEGMENT_RX_PIN 11
 
-#define SEVEN_SEGMENT_TX 10
-#define SEVEN_SEGMENT_RX 11
+#define CO2_INTERVAL 150
+#define SAMPLE_INTERVAL 5000
 
-#define BUTTON_OPEN 3
-#define BUTTON_CLOSE 2
-#define OUTPUT_CLOSE 4
-#define OUTPUT_OPEN 5
+#define MODE_AUTOMATIC 0
+#define MODE_MANUAL 1
 
-#define UPDATE_INTERVAL 10000
+#define CO2_LOWER 1000
+#define CO2_UPPER 1500
 
-char TemperatureString[10]; 
+#define HUMIDITY_UPPER 60
+#define HUMIDITY_LOWER 30
 
-SoftwareSerial TemperatureDisplay( SEVEN_SEGMENT_RX , SEVEN_SEGMENT_TX );
+#define WINDOW_OPEN 0
+#define WINDOW_CLOSED 1
 
-DHT HumiditySensor( HUMIDITY_SENSOR_SIG , HUMIDITY_SENSOR_TYPE );
+SevSeg SevenSegment = SevSeg();
 
 Adafruit_24bargraph CO2Bar = Adafruit_24bargraph();
+
 Adafruit_24bargraph HumidityBar = Adafruit_24bargraph();
 
-uint CO2Value = 0;
-uint HumidityCounter = 0;
+DHT HumiditySensor( A0 , DHT22 );
 
-uint CloseButtonIsPressed = false;
-uint OpenButtonIsPressed = false;
-ulong IntervalHelper = 0;
+kSeries CO2Sensor( 13 , 12 );
 
-boolean WindowIsOpen = false;
+long SampleIntervalHelper = 0;
+
+byte OperationMode = 0;
+byte WindowMode = 0;
+
+bool CloseButtonPressed = false;
+bool OpenButtonPressed = false;
+
+volatile int Humidity;
+volatile int CO2Value;
 
 void setup(){
 
 	Serial.begin( 57600 );
 
-	TemperatureDisplay.begin( 9600 );
-	SetTemperatureDisplayBrightness( 255 );
+	SevenSegment.Init( &Serial1 );
+	SevenSegment.Clear();
+	SevenSegment.Brightness( 255 );
+	SevenSegment.Text( " HI " );
+
+	pinMode( BUTTON_CLOSE_PIN , INPUT_PULLUP );
+	pinMode( BUTTON_OPEN_PIN , INPUT_PULLUP );
+
+	pinMode( OUTPUT_CLOSE_PIN , OUTPUT );
+	pinMode( OUTPUT_OPEN_PIN , OUTPUT );
 
 	HumiditySensor.begin();
 
 	CO2Bar.begin( 0x70 );
-	HumidityBar.begin( 0x71 );
+	CO2Bar.clear();
+	CO2Bar.setBrightness( 15 );
 
-	pinMode( BUTTON_CLOSE , INPUT_PULLUP );
-	pinMode( BUTTON_OPEN , INPUT_PULLUP );
-	pinMode( OUTPUT_CLOSE , OUTPUT );
-	pinMode( OUTPUT_OPEN , OUTPUT );
+	delay( 500 );
+
+	int CO2Value = 0;
+	while( CO2Value <= 3600 ) {
+		DisplayCO2Bar( CO2Value );
+		CO2Value = CO2Value + 150;
+		delay( 10 );
+	}
+
+	HumidityBar.begin( 0x71 );
+	HumidityBar.clear();
+	HumidityBar.setBrightness( 15 );
+
+	delay( 500 );
+
+	int HumidityValue = 0;
+	while( HumidityValue <= 100 ) {
+		DisplayHumidityBar( HumidityValue );
+		HumidityValue = HumidityValue + 10;
+		delay( 10 );
+	}
+
+	delay( 500 );
+
+	for( byte i = 0 ; i < 24 ; i++ ) {
+		CO2Bar.setBar( i , LED_OFF );
+		CO2Bar.writeDisplay();
+
+		HumidityBar.setBar( i , LED_OFF );
+		HumidityBar.writeDisplay();
+
+		delay( 10 );
+	}
+
+	SevenSegment.Clear();
+	SevenSegment.Text( "CLSE" );
+/*
+	digitalWrite( OUTPUT_CLOSE_PIN , HIGH );
+	delay( 2000 );
+	digitalWrite( OUTPUT_CLOSE_PIN , LOW );
+	WindowMode = WINDOW_CLOSED;
+	delay( 10000 );
+*/
+	SevenSegment.Clear();
+	SevenSegment.Text( "DONE" );
+
+	delay( 1000 );
+
+	byte mode = EEPROM.read( 100 );
+	if( mode == MODE_MANUAL ) {
+		SetMode( MODE_MANUAL );
+	} else if( mode == MODE_AUTOMATIC ) {
+		SetMode( MODE_AUTOMATIC );
+	} else {
+		SetMode( MODE_AUTOMATIC );
+		EEPROM.write( 100 , OperationMode );
+	}
 
 	UpdateValues();
-	IntervalHelper = millis();
+
+	SampleIntervalHelper = millis();
+
 }
 
-void loop(){
-	
-	if( ( millis() - IntervalHelper ) >= UPDATE_INTERVAL ) {
+void loop() {
+
+	long TimeDifference = millis() - SampleIntervalHelper;
+
+	if( TimeDifference > SAMPLE_INTERVAL ) {
 		UpdateValues();
-		IntervalHelper = millis();
+		SampleIntervalHelper = millis();
 	}
 
-	CloseButtonIsPressed = digitalRead( BUTTON_CLOSE ); 
-	OpenButtonIsPressed = digitalRead( BUTTON_OPEN ); 
+	int CloseButton = digitalRead( BUTTON_CLOSE_PIN );
+	int OpenButton = digitalRead( BUTTON_OPEN_PIN );
 
-	if( CloseButtonIsPressed == 0 ) {
-		digitalWrite( OUTPUT_CLOSE , HIGH );
-		WindowIsOpen = false;
-	} else if( OpenButtonIsPressed == 0) {
-		digitalWrite( OUTPUT_OPEN , HIGH );
-		WindowIsOpen = true;
-	} else if( CO2Value >= 1500 && WindowIsOpen == false ) {
-		digitalWrite( OUTPUT_OPEN , HIGH );
-		WindowIsOpen = false;
-	} else if( CO2Value <= 1100 && WindowIsOpen == true ) {
-		digitalWrite( OUTPUT_CLOSE , HIGH );
-		WindowIsOpen = true;
-	} else {
-		digitalWrite( OUTPUT_OPEN , LOW );
-		digitalWrite( OUTPUT_CLOSE , LOW );
+	if ( CloseButton == LOW && OpenButton == LOW ) {
+		ChangeMode();
+		UpdateValues();
+	} else if( OperationMode == MODE_AUTOMATIC ) {
+		if( CloseButton == LOW ) {
+			CloseButtonPressed = true;
+			digitalWrite( OUTPUT_CLOSE_PIN , HIGH );
+			WindowMode = WINDOW_CLOSED;
+			delay( 500 );
+			ChangeMode();
+		} else if( OpenButton == LOW ) {
+			OpenButtonPressed = true;
+			digitalWrite( OUTPUT_OPEN_PIN , HIGH );
+			WindowMode = WINDOW_OPEN;
+			delay( 500 );
+			ChangeMode();
+		} else {
+			if( CO2Value > CO2_UPPER && WindowMode == WINDOW_CLOSED ) {
+				Serial.println( "OPEN WINDOW" );
+				digitalWrite( OUTPUT_OPEN_PIN , HIGH );
+				WindowMode = WINDOW_OPEN;
+				delay( 1000 );
+				digitalWrite( OUTPUT_OPEN_PIN , LOW );
+			} else if( CO2Value < CO2_LOWER && WindowMode == WINDOW_OPEN ) {
+				Serial.println( "CLOSE WINDOW" );
+				digitalWrite( OUTPUT_CLOSE_PIN , HIGH );
+				WindowMode = WINDOW_CLOSED;
+				delay( 1000 );
+				digitalWrite( OUTPUT_CLOSE_PIN , LOW );
+			} else if( Humidity > 60  && WindowMode == WINDOW_CLOSED ) {
+				Serial.println( "OPEN WINDOW" );
+				digitalWrite( OUTPUT_OPEN_PIN , HIGH );
+				WindowMode = WINDOW_OPEN;
+				delay( 1000 );
+				digitalWrite( OUTPUT_OPEN_PIN , LOW );
+			}
+		}
+	} else if( OperationMode == MODE_MANUAL ) {
+		if( CloseButton == LOW && CloseButtonPressed == false ) {
+			Serial.println( "CLOSE PRESSED" );
+			CloseButtonPressed = true;
+			digitalWrite( OUTPUT_CLOSE_PIN , HIGH );
+			WindowMode = WINDOW_OPEN;
+		} else if( CloseButton == HIGH && CloseButtonPressed == true ) {
+			Serial.println( "CLOSE RELEASED");
+			CloseButtonPressed = false;
+			digitalWrite( OUTPUT_CLOSE_PIN , LOW );
+		} if( OpenButton == LOW && OpenButtonPressed == false && CloseButtonPressed == false ) {
+			Serial.println( "OPEN PRESSED" );
+			OpenButtonPressed = true;
+			digitalWrite( OUTPUT_OPEN_PIN , HIGH );
+			WindowMode = WINDOW_CLOSED;
+		} else if( OpenButton == HIGH && OpenButtonPressed == true ) {
+			Serial.println( "OPEN RELEASED");
+			OpenButtonPressed = false;
+			digitalWrite( OUTPUT_OPEN_PIN , LOW );
+		}
 	}
+
+	delay( 100 );
 
 }
 
 void UpdateValues(){
-	Serial.println( "Update Values" );
-	float HumidityF = HumiditySensor.readHumidity();
-	int Humidity = (int)HumidityF;
-	Serial.println( Humidity );
-
 	float TemperatureF = HumiditySensor.readTemperature();
-	int Temperature = (int)( TemperatureF * 100.0 );
-	Serial.println( Temperature );
+	SevenSegment.Decimals( 0b00000010 );
+	SevenSegment.Float( TemperatureF );
 
-	SetCO2Bar( CO2Value);
-    SetHumidityBar( Humidity );
-    SetTemperatureDisplayNumber( Temperature );
+	float HumidityF = HumiditySensor.readHumidity();
+	Humidity = int( HumidityF );
+	DisplayHumidityBar( Humidity );
 
-    Serial.println( CO2Value );
-
-    if( CO2Value < 3600 ) CO2Value += 150;
-	else CO2Value = 0;
+	float CO2ValueF = CO2Sensor.getCO2( 'p' );
+	CO2Value = int( CO2ValueF );
+	if( CO2Value > 0 && CO2Value < 10000 ) DisplayCO2Bar( CO2Value );
 }
 
-void SetCO2Bar( uint value ) {
-	ubyte bars = value / 150;
-	for( ubyte bar = 0 ; bar < bars ; bar++ ) {
-		CO2Bar.setBar( bar , LED_OFF );
-		if( bar < 10 ) CO2Bar.setBar( 24 - bar , LED_GREEN );
-		if( bar >= 10 && bar < 17 ) {
-			CO2Bar.setBar( 24 - bar , LED_RED );
-			CO2Bar.setBar( 24 - bar , LED_YELLOW );
-		}
-		if( bar >= 17 && bar < 24 ) {
-			CO2Bar.setBar( 24 - bar , LED_RED );
+void DisplayCO2Bar( int Value ) {
+	byte Bars = Value / CO2_INTERVAL;
+	for( byte Bar = 0 ; Bar < Bars ; Bar++ ) {
+		if( Bar < 10 ) {
+			CO2Bar.setBar( 23 - Bar , LED_GREEN );
+		} else if( Bar >= 10 && Bar < 17 ) {
+			CO2Bar.setBar( 23 - Bar , LED_RED );
+			CO2Bar.setBar( 23 - Bar , LED_YELLOW );
+		} else if( Bar >= 17 && Bar < 24 ) {
+			CO2Bar.setBar( 23 - Bar , LED_RED );
 		}
 	}
-	for( ubyte bar = bars ; bar < 24 ; bar++ ) {
-		CO2Bar.setBar( 24 - bar , LED_OFF );
+	for( byte Bar = Bars ; Bar < 24 ; Bar++ ) {
+		CO2Bar.setBar( 23 - Bar , LED_OFF );
 	}
 	CO2Bar.writeDisplay();
 }
 
-void SetHumidityBar( uint value ) {
-	ubyte bars = (float)value / 4.1666;
-	for( ubyte bar = 0 ; bar < bars ; bar++ ) {
-		if( bar < 7 ) {
-			HumidityBar.setBar( 24 - bar , LED_RED );
-			HumidityBar.setBar( 24 - bar , LED_YELLOW );
-		}
-		if( bar >= 7 && bar < 14 ) {
-			HumidityBar.setBar( 24 - bar , LED_GREEN );
-		}
-		if( bar >= 14 && bar < 24 ) {
-			HumidityBar.setBar( 24 - bar , LED_RED );
+void DisplayHumidityBar( int Value ) {
+	byte Bars = float( Value ) / 4.16;
+	for( byte Bar = 0 ; Bar < Bars ; Bar++ ) {
+		if( Bar < 7 ) {
+			HumidityBar.setBar( 23 - Bar , LED_RED );
+			HumidityBar.setBar( 23 - Bar , LED_YELLOW );
+		} else if( Bar >= 7 && Bar < 14 ) {
+			HumidityBar.setBar( 23 - Bar , LED_GREEN );
+		} else if( Bar >= 14 && Bar < 24 ) {
+			HumidityBar.setBar( 23 - Bar , LED_RED );
 		}
 	}
-	for( ubyte bar = bars ; bar < 24 ; bar++ ) {
-		HumidityBar.setBar( 24 - bar , LED_OFF );
+	for( byte Bar = Bars ; Bar < 24 ; Bar++ ) {
+		HumidityBar.setBar( 23 - Bar , LED_OFF );
 	}
 	HumidityBar.writeDisplay();
 }
 
-void ClearTempeatureDisplay(){
-	TemperatureDisplay.write( 0x76 );
+void ChangeMode( ) {
+	if( OperationMode == MODE_MANUAL ) {
+		SetMode( MODE_AUTOMATIC );
+	} else if( OperationMode == MODE_AUTOMATIC ) {
+		SetMode( MODE_MANUAL );
+	}
+	EEPROM.write( 100 , OperationMode );
 }
 
-void SetTemperatureDisplayBrightness( byte brightness ) {
-	TemperatureDisplay.write( 0x7A );
-	TemperatureDisplay.write( brightness );
-}
-
-void SetTemperatureDisplayDecimals( byte decimals ) {
-	TemperatureDisplay.write( 0x77 );
-	TemperatureDisplay.write( decimals );
-}
-
-void SetTemperatureDisplayNumber( int value ) {
-	sprintf( TemperatureString , "%4d" , value );
-	TemperatureDisplay.print( TemperatureString );
-	SetTemperatureDisplayDecimals( 0b00000010 );
+void SetMode( byte mode ) {
+	if( mode == MODE_MANUAL ) {
+		OperationMode = MODE_MANUAL;
+		SevenSegment.Clear();
+		SevenSegment.Text( "HAND" );
+	} else if( mode == MODE_AUTOMATIC ) {
+		OperationMode = MODE_AUTOMATIC;
+		SevenSegment.Clear();
+		SevenSegment.Text( "AUTO" );
+	}
+	delay( 1000 );
+	SevenSegment.Clear();
 }
