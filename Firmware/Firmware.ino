@@ -39,12 +39,14 @@ DHT HumiditySensor( HUMIDITY_SENSOR_SIG , HUMIDITY_SENSOR_TYPE );
 Adafruit_24bargraph CO2Bar = Adafruit_24bargraph();
 Adafruit_24bargraph HumidityBar = Adafruit_24bargraph();
 
-uint CO2Counter = 0;
+uint CO2Value = 0;
 uint HumidityCounter = 0;
 
 uint CloseButtonIsPressed = false;
 uint OpenButtonIsPressed = false;
 ulong IntervalHelper = 0;
+
+boolean WindowIsOpen = false;
 
 void setup(){
 
@@ -79,11 +81,19 @@ void loop(){
 
 	if( CloseButtonIsPressed == 0 ) {
 		digitalWrite( OUTPUT_CLOSE , HIGH );
+		WindowIsOpen = false;
 	} else if( OpenButtonIsPressed == 0) {
 		digitalWrite( OUTPUT_OPEN , HIGH );
+		WindowIsOpen = true;
+	} else if( CO2Value >= 1500 && WindowIsOpen == false ) {
+		digitalWrite( OUTPUT_OPEN , HIGH );
+		WindowIsOpen = false;
+	} else if( CO2Value <= 1100 && WindowIsOpen == true ) {
+		digitalWrite( OUTPUT_CLOSE , HIGH );
+		WindowIsOpen = true;
 	} else {
 		digitalWrite( OUTPUT_OPEN , LOW );
-		digitalWrite( OUTPUT_CLOSE , LOW ); 
+		digitalWrite( OUTPUT_CLOSE , LOW );
 	}
 
 }
@@ -98,14 +108,14 @@ void UpdateValues(){
 	int Temperature = (int)( TemperatureF * 100.0 );
 	Serial.println( Temperature );
 
-	SetCO2Bar( CO2Counter );
+	SetCO2Bar( CO2Value);
     SetHumidityBar( Humidity );
     SetTemperatureDisplayNumber( Temperature );
 
-    Serial.println( CO2Counter );
+    Serial.println( CO2Value );
 
-    if( CO2Counter < 3600 ) CO2Counter += 150;
-	else CO2Counter = 0;
+    if( CO2Value < 3600 ) CO2Value += 150;
+	else CO2Value = 0;
 }
 
 void SetCO2Bar( uint value ) {
