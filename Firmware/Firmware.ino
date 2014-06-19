@@ -16,12 +16,12 @@
 #define SEVEN_SEGMENT_RX_PIN 11
 
 #define CO2_INTERVAL 150
-#define SAMPLE_INTERVAL 5000
+#define SAMPLE_INTERVAL 1000
 
 #define MODE_AUTOMATIC 0
 #define MODE_MANUAL 1
 
-#define CO2_LOWER 1000
+#define CO2_LOWER 1200
 #define CO2_UPPER 1500
 
 #define HUMIDITY_UPPER 60
@@ -52,8 +52,6 @@ volatile int Humidity;
 volatile int CO2Value;
 
 void setup(){
-
-	Serial.begin( 57600 );
 
 	SevenSegment.Init( &Serial1 );
 	SevenSegment.Clear();
@@ -108,13 +106,11 @@ void setup(){
 
 	SevenSegment.Clear();
 	SevenSegment.Text( "CLSE" );
-/*
 	digitalWrite( OUTPUT_CLOSE_PIN , HIGH );
 	delay( 2000 );
 	digitalWrite( OUTPUT_CLOSE_PIN , LOW );
 	WindowMode = WINDOW_CLOSED;
 	delay( 10000 );
-*/
 	SevenSegment.Clear();
 	SevenSegment.Text( "DONE" );
 
@@ -166,19 +162,16 @@ void loop() {
 			ChangeMode();
 		} else {
 			if( CO2Value > CO2_UPPER && WindowMode == WINDOW_CLOSED ) {
-				Serial.println( "OPEN WINDOW" );
 				digitalWrite( OUTPUT_OPEN_PIN , HIGH );
 				WindowMode = WINDOW_OPEN;
 				delay( 1000 );
 				digitalWrite( OUTPUT_OPEN_PIN , LOW );
 			} else if( CO2Value < CO2_LOWER && WindowMode == WINDOW_OPEN ) {
-				Serial.println( "CLOSE WINDOW" );
 				digitalWrite( OUTPUT_CLOSE_PIN , HIGH );
 				WindowMode = WINDOW_CLOSED;
 				delay( 1000 );
 				digitalWrite( OUTPUT_CLOSE_PIN , LOW );
 			} else if( Humidity > 60  && WindowMode == WINDOW_CLOSED ) {
-				Serial.println( "OPEN WINDOW" );
 				digitalWrite( OUTPUT_OPEN_PIN , HIGH );
 				WindowMode = WINDOW_OPEN;
 				delay( 1000 );
@@ -187,21 +180,17 @@ void loop() {
 		}
 	} else if( OperationMode == MODE_MANUAL ) {
 		if( CloseButton == LOW && CloseButtonPressed == false ) {
-			Serial.println( "CLOSE PRESSED" );
 			CloseButtonPressed = true;
 			digitalWrite( OUTPUT_CLOSE_PIN , HIGH );
 			WindowMode = WINDOW_OPEN;
 		} else if( CloseButton == HIGH && CloseButtonPressed == true ) {
-			Serial.println( "CLOSE RELEASED");
 			CloseButtonPressed = false;
 			digitalWrite( OUTPUT_CLOSE_PIN , LOW );
 		} if( OpenButton == LOW && OpenButtonPressed == false && CloseButtonPressed == false ) {
-			Serial.println( "OPEN PRESSED" );
 			OpenButtonPressed = true;
 			digitalWrite( OUTPUT_OPEN_PIN , HIGH );
 			WindowMode = WINDOW_CLOSED;
 		} else if( OpenButton == HIGH && OpenButtonPressed == true ) {
-			Serial.println( "OPEN RELEASED");
 			OpenButtonPressed = false;
 			digitalWrite( OUTPUT_OPEN_PIN , LOW );
 		}
@@ -221,8 +210,8 @@ void UpdateValues(){
 	DisplayHumidityBar( Humidity );
 
 	float CO2ValueF = CO2Sensor.getCO2( 'p' );
-	CO2Value = int( CO2ValueF );
-	if( CO2Value > 0 && CO2Value < 10000 ) DisplayCO2Bar( CO2Value );
+	if( CO2ValueF > 0.0 && CO2ValueF < 10000.0 ) CO2Value = int( CO2ValueF );
+	DisplayCO2Bar( CO2Value );
 }
 
 void DisplayCO2Bar( int Value ) {
