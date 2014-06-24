@@ -182,14 +182,14 @@ void loop() {
 		if( CloseButton == LOW && CloseButtonPressed == false ) {
 			CloseButtonPressed = true;
 			digitalWrite( OUTPUT_CLOSE_PIN , HIGH );
-			WindowMode = WINDOW_OPEN;
+			WindowMode = WINDOW_CLOSED;
 		} else if( CloseButton == HIGH && CloseButtonPressed == true ) {
 			CloseButtonPressed = false;
 			digitalWrite( OUTPUT_CLOSE_PIN , LOW );
 		} if( OpenButton == LOW && OpenButtonPressed == false && CloseButtonPressed == false ) {
 			OpenButtonPressed = true;
 			digitalWrite( OUTPUT_OPEN_PIN , HIGH );
-			WindowMode = WINDOW_CLOSED;
+			WindowMode = WINDOW_OPEN;
 		} else if( OpenButton == HIGH && OpenButtonPressed == true ) {
 			OpenButtonPressed = false;
 			digitalWrite( OUTPUT_OPEN_PIN , LOW );
